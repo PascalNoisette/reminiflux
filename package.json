@@ -10,6 +10,7 @@
     "react-click-n-hold": "^1.0.7",
     "react-dom": "^16.14.0",
     "react-hotkeys-hook": "^2.4.1",
+    "react-intersection-observer": "^9.1.0",
     "react-modal": "^3.12.1",
     "react-scripts": "3.4.1",
     "react-split-pane": "^0.1.92",

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { apiCall, relaTimestamp, linkNewTab } from './lib/util'
 import SplitPane from 'react-split-pane'
-import styled from 'styled-components'
+import styled,{ keyframes }from 'styled-components'
 import { useHotkeys } from 'react-hotkeys-hook'
+import { useInView } from 'react-intersection-observer';
 
 const Favico = styled.img`
 	width: 16px;
@@ -20,6 +21,10 @@ const StatusDot = styled.div`
 	display: inline-block;
 `
 
+const ReadingDiv = styled.div`
+	padding:10px;
+`
+
 const ItemListTable = styled.table`
 	border: none;
 	border-collapse: collapse;
@@ -27,6 +32,28 @@ const ItemListTable = styled.table`
 	table-layout: fixed;
 `
 
+const ViewMoreContentCell = styled.div`
+	${props => (props.showMore ? '' : props.customHeight)};
+`
+
+const SpinnerAnimation = keyframes`
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+`
+const SpinnerContainer = styled.div`
+`
+const LoadingSpinner = styled.div`
+	width: 50px;
+	height: 50px;
+	border: 10px solid #f3f3f3; /* Light grey */
+	border-top: 10px solid #383636; /* Black */
+	border-radius: 50%;
+	animation: ${SpinnerAnimation} 1.5s linear infinite;
+`
 const ItemListRow = styled.tr`
 	color: ${(props) => (props.read ? props.theme.readentry : 'inherit')};
 	background-color: ${(props) =>
@@ -42,12 +69,24 @@ const ItemListCell = styled.td`
 	overflow: hidden;
 	width: ${(props) => props.width || '100%'};
 	text-align: ${(props) => props.align || 'left'};
+	padding: 5px;
 `
+
+const CellTitle = styled.span`
+	font-size:110%;
+	font-weight:bold;
+`;
 
 const ContentPreview = styled.span`
 	font-size: 80%;
 	color: ${(props) => props.theme.preview};
 	margin-left: 10px;
+`
+
+const ItemListCellColapsed = styled.td`
+	overflow: hidden;
+	width: ${(props) => props.width || '100%'};
+	text-align: ${(props) => props.align || 'left'};
 `
 
 const extractContent = (s) => {
@@ -59,7 +98,9 @@ const extractContent = (s) => {
 	return [span.textContent || span.innerText].toString().replace(/ +/g, ' ')
 }
 
+
 const FeedItem = React.forwardRef((props, ref) => (
+  <>
 	<ItemListRow
 		read={props.item.status !== 'unread'}
 		ref={ref}
@@ -75,10 +116,12 @@ const FeedItem = React.forwardRef((props, ref) => (
 			<StatusDot read={props.item.status !== 'unread'} />
 		</ItemListCell>
 		<ItemListCell onClick={props.onItemChange}>
-			{props.item.title}
+			<CellTitle>{props.item.title}</CellTitle>
+			{props.embeddedMode !== true && (
 			<ContentPreview>
 				{extractContent(props.item.content)}
 			</ContentPreview>
+			)}
 		</ItemListCell>
 		<ItemListCell
 			width='40px'
@@ -88,7 +131,73 @@ const FeedItem = React.forwardRef((props, ref) => (
 			{relaTimestamp(props.item.published_at)}
 		</ItemListCell>
 	</ItemListRow>
+	{props.embeddedMode && (<ViewMoreContent markRead={props.markRead} item={props.item} onItemChange={props.onItemChange}/>)}
+  </>
 ))
+
+function usePrevious(value) {
+	const ref = useRef();
+	useEffect(() => {
+	  ref.current = value;
+	});
+	return ref.current;
+  }
+function ViewMoreContent({item, markRead, onItemChange}) {
+
+	const [content, setContent] = useState(item.content);
+	const [downloaded, setDownloaded] = useState(false);
+	const [loading, isLoading] = useState(false);
+	const [showMore, setShowMore] = useState(false);
+	const [customHeight, setCustomHeight] = useState('max-height: 300px');
+	const { ref, inView, entry } = useInView();
+	const wasInView = usePrevious(inView);
+	const scrollDown = (entry?.boundingClientRect.top < 0) && (!entry?.isIntersecting);
+	const readableContent = useRef();
+	const optionToShowMore = readableContent?.current?.clientHeight>300;
+
+	useHotkeys(
+		'esc',
+		(e) => {
+			if (inView && showMore && readableContent.current) {
+				setShowMore(false);
+				const seaLevel = window.innerHeight - readableContent.current.getBoundingClientRect().y - 20;
+				setCustomHeight(`height: ${seaLevel}px`);
+			}
+		},
+		[inView, showMore, readableContent]
+	)
+
+	useEffect(() => {
+		if (inView && !downloaded && !loading) {
+			isLoading(true);
+			(async () => {
+				const downloadedContent = await apiCall(`entries/${item.id}/fetch-content`, ()=>{});
+				if (downloadedContent.content.length>content.length) {
+					setContent(downloadedContent.content);
+				}
+				setDownloaded(true);
+			})();
+		} else if (!inView && wasInView && item.status === 'unread' && scrollDown) {
+			markRead([item]);
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [inView]);
+
+	return (<tr>
+		<ItemListCellColapsed colSpan="4"  onClick={onItemChange}>
+			<ViewMoreContentCell ref={ref} showMore={showMore} customHeight={customHeight}>
+				<ReadingDiv
+						id={`itemcontent-${item.id}`}
+						ref={readableContent}
+						dangerouslySetInnerHTML={{ __html: content }}
+					/>
+					
+				{!downloaded && <SpinnerContainer><LoadingSpinner/></SpinnerContainer>}
+			</ViewMoreContentCell>
+			{!showMore && downloaded && inView && optionToShowMore && <ShowMoreButtonWrapper><ShowMoreButton className="btn" onClick={() => setShowMore(!showMore)}>{showMore ? "Show less":"Show more"}</ShowMoreButton></ShowMoreButtonWrapper>}
+		</ItemListCellColapsed>
+	</tr>);
+}
 
 function FeedItemList(props) {
 	const selectedItem = useRef()
@@ -176,6 +285,7 @@ function FeedItemList(props) {
 							props.markRead([item], item.status === 'unread')
 						}
 						errorHandler={props.errorHandler}
+						embeddedMode={props.embeddedMode}
 					/>
 				))}
 			</tbody>
@@ -210,6 +320,19 @@ const ControlButton = styled.button`
 	font-size: 90%;
 	width: 40px;
 	margin-right: 5px;
+`
+
+const ShowMoreButton = styled.button`
+	font-size: 1.4em;
+`
+const ShowMoreButtonWrapper = styled.div`
+	width: 98%;
+	text-align: center;
+	position: absolute;
+	margin-top: -1.4rem;
+	margin-left: 1em;
+	background-color: rgba(200,200,200,0.1);
+	border-bottom: 1px solid gray;
 `
 
 function FeedItemHeader(props) {
@@ -252,6 +375,9 @@ function FeedItemHeader(props) {
 			<HeaderControls>
 				<ControlButton onClick={markAllRead} title='Mark all as read'>
 					✓
+				</ControlButton>
+				<ControlButton onClick={props.toggleEmbeddedMode} title={props.embeddedMode ? "Content in horizontal pane (Splited)" : "Load content directly in list (embedded)" }>
+					{props.embeddedMode ? "📜" : "📑" }
 				</ControlButton>
 				<ControlButton
 					onClick={markReadUntil}
@@ -342,6 +468,7 @@ function ItemBrowser(props) {
 	}, [
 		sortOldFirst,
 		showRead,
+		props.embeddedMode,
 		props.currentFeed,
 		props.feeds,
 		props.errorHandler,
@@ -390,6 +517,12 @@ function ItemBrowser(props) {
 					setShowRead(b)
 					localStorage.setItem('filter', b ? 'a' : 'u')
 				}}
+				embeddedMode={props.embeddedMode}
+				toggleEmbeddedMode={() => {
+					const opposite = !props.embeddedMode;
+					props.setEmbeddedMode(opposite)
+					localStorage.setItem('embeddedMode', opposite)
+				}}
 				markRead={markRead}
 				errorHandler={props.errorHandler}
 			/>
@@ -409,6 +542,7 @@ function ItemBrowser(props) {
 					onItemChange={props.onItemChange}
 					markRead={markRead}
 					errorHandler={props.errorHandler}
+					embeddedMode={props.embeddedMode}
 				/>
 			)}
 		</SplitPane>

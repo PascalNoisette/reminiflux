@@ -72,6 +72,9 @@ function Reminiflux() {
 	const forceUpdate = React.useCallback(() => updateState({}), [])
 
 	const cache = JSON.parse(localStorage.getItem('favicons')) || {}
+	const [embeddedMode, setEmbeddedMode] = useState(
+		localStorage.getItem('embeddedMode') === "true"
+	)
 
 	useEffect(() => {
 		const fetchFeeds = async () => {
@@ -344,7 +347,7 @@ function Reminiflux() {
 							/>
 						</div>
 
-						<SplitPane
+						{embeddedMode !== true && (<SplitPane
 							split='horizontal'
 							minSize='10%'
 							defaultSize={
@@ -361,6 +364,8 @@ function Reminiflux() {
 								onItemChange={setCurrentItem}
 								updateUnread={setUpdateUnreadTrigger}
 								errorHandler={setError}
+								embeddedMode={embeddedMode}
+								setEmbeddedMode={setEmbeddedMode}
 							/>
 
 							<ItemViewer
@@ -372,7 +377,18 @@ function Reminiflux() {
 								}
 								errorHandler={setError}
 							/>
-						</SplitPane>
+						</SplitPane>)}
+
+						{embeddedMode === true && (<ItemBrowser
+								currentFeed={currentFeed}
+								currentItem={currentItem}
+								feeds={feeds}
+								onItemChange={setCurrentItem}
+								updateUnread={setUpdateUnreadTrigger}
+								errorHandler={setError}
+								embeddedMode={embeddedMode}
+								setEmbeddedMode={setEmbeddedMode}
+							/>)}
 					</SplitPane>
 				</div>
 			)}
